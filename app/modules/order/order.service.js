@@ -120,10 +120,10 @@ const generateOrderId = async (transaction) => {
   return `${ORDER_ID_PREFIX}-${String(nextNum).padStart(4, "0")}`;
 };
 
-// Older orders were stored as TJ-/WZ-; the number part is the same sequence, so an
+// Older orders were stored as TJ-/WZ-/HD-; the number part is the same sequence, so an
 // invoice typed with any of these prefixes matches the stored order.
-const ORDER_ID_PREFIX = "HD";
-const LEGACY_ORDER_ID_PREFIXES = ["TJ", "WZ"];
+const ORDER_ID_PREFIX = "HS";
+const LEGACY_ORDER_ID_PREFIXES = ["HD", "TJ", "WZ"];
 
 const orderIdVariants = (value) => {
   const raw = String(value || "").trim();
