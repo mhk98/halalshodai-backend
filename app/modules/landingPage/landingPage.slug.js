@@ -1,4 +1,5 @@
 const { Op } = require("sequelize");
+const ApiError = require("../../../error/ApiError");
 
 // Landing pages live at the site root (holydeen.com/<slug>), so a slug must never
 // shadow a storefront route or a file the server answers itself.
@@ -65,4 +66,41 @@ const uniqueLandingSlug = async (LandingPage, title, excludeId = null) => {
   }
 };
 
-module.exports = { toLandingSlug, uniqueLandingSlug, RESERVED_SLUGS };
+/**
+ * A slug typed by an admin. Only English letters, digits and "-" are kept, so the
+ * link stays short when shared (Bangla paths turn into long %E0%A6... codes).
+ */
+const toCustomSlug = (value) =>
+  String(value || "")
+    .normalize("NFKD")
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, MAX_SLUG_LENGTH)
+    .replace(/-+$/, "");
+
+/** Validates an admin-typed slug and makes sure no live landing page uses it. */
+const claimCustomSlug = async (LandingPage, value, excludeId = null) => {
+  const slug = toCustomSlug(value);
+  if (!slug) {
+    throw new ApiError(400, "URL slug must use English letters or numbers, e.g. achar-offer");
+  }
+  if (/^\d+$/.test(slug)) {
+    throw new ApiError(400, "URL slug must contain at least one letter");
+  }
+  if (RESERVED_SLUGS.has(slug)) {
+    throw new ApiError(400, `"${slug}" is used by the website itself. Choose another URL slug.`);
+  }
+  const holder = await LandingPage.findOne({
+    where: { slug, ...(excludeId ? { Id: { [Op.ne]: excludeId } } : {}) },
+    paranoid: false,
+  });
+  if (holder && !holder.deletedAt) {
+    throw new ApiError(400, `"${slug}" is already used by another landing page`);
+  }
+  // A deleted page no longer needs its link; free it for this one.
+  if (holder) await holder.update({ slug: null }, { paranoid: false });
+  return slug;
+};
+
+module.exports = { toLandingSlug, uniqueLandingSlug, toCustomSlug, claimCustomSlug, RESERVED_SLUGS };

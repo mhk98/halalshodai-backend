@@ -3,7 +3,7 @@ const paginationHelpers = require("../../../helpers/paginationHelper");
 const db = require("../../../models");
 const ApiError = require("../../../error/ApiError");
 const { getLandingOptions } = require("../order/orderPricing");
-const { uniqueLandingSlug } = require("./landingPage.slug");
+const { uniqueLandingSlug, claimCustomSlug } = require("./landingPage.slug");
 
 const LandingPage = () => db.landingPage;
 const Product = () => db.product;
@@ -202,7 +202,11 @@ const normalizePayload = async (payload = {}) => {
 
 const insertIntoDB = async (payload) => {
   const data = await normalizePayload(payload);
-  return LandingPage().create({ ...data, slug: await uniqueLandingSlug(LandingPage(), data.title) });
+  const requested = String(payload.slug || "").trim();
+  const slug = requested
+    ? await claimCustomSlug(LandingPage(), requested)
+    : await uniqueLandingSlug(LandingPage(), data.title);
+  return LandingPage().create({ ...data, slug });
 };
 
 const getAllFromDB = async (filters, options) => {
@@ -259,8 +263,16 @@ const updateOneFromDB = async (id, payload) => {
   if (!row) throw new ApiError(404, "Landing page not found");
   const existing = row.get({ plain: true });
   const data = await normalizePayload({ ...existing, ...payload });
-  // The URL follows the campaign title; it only changes when the title does.
-  if (!existing.slug || data.title !== existing.title) {
+  // A slug the admin typed wins. Empty means "make it from the title"; when the admin
+  // form does not send a slug at all, the URL follows the title as before.
+  const requested = payload.slug === undefined || payload.slug === null
+    ? undefined
+    : String(payload.slug).trim();
+  if (requested) {
+    if (requested !== existing.slug) {
+      data.slug = await claimCustomSlug(LandingPage(), requested, row.Id);
+    }
+  } else if (requested === "" || !existing.slug || data.title !== existing.title) {
     data.slug = await uniqueLandingSlug(LandingPage(), data.title, row.Id);
   }
   await row.update(data);

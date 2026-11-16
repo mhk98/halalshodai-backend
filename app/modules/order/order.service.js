@@ -760,6 +760,13 @@ const normalizeCourierPhone = (value) => {
 
 const getOrderMeta = (order) => parseJsonObject(order?.note);
 
+// Couriers reject an invoice they have already seen, so an order sent again after
+// being unlinked goes out as HS-0005-R1, HS-0005-R2, ...
+const getCourierInvoice = (order) => {
+  const resends = Number(getOrderMeta(order).courierResendCount) || 0;
+  return resends > 0 ? `${order.orderId}-R${resends}` : order.orderId;
+};
+
 // Admin manual orders used to save the delivery-charge option (e.g. "ঢাকার বাইরে ১২০ টাকা")
 // as customerArea — that is not a deliverable address, so never send it to a courier.
 const DELIVERY_CHARGE_LABEL = /^[ঀ-৿a-z\s]*[০-৯0-9]+\s*(টাকা|tk|taka)$/i;
@@ -808,7 +815,7 @@ const buildSteadfastOrderPayload = (order, options = {}) => {
   if (!recipientAddress) throw new ApiError(400, "Recipient address is required for Steadfast");
 
   return {
-    invoice: order.orderId,
+    invoice: getCourierInvoice(order),
     recipient_name: String(order.customerName || "Customer").slice(0, 100),
     recipient_phone: phone,
     alternative_phone: options.alternativePhone ? normalizeCourierPhone(options.alternativePhone) : undefined,
@@ -835,7 +842,7 @@ const buildPathaoOrderPayload = (order, config, options = {}) => {
 
   return {
     store_id: Number(options.storeId || config.storeId),
-    merchant_order_id: order.orderId,
+    merchant_order_id: getCourierInvoice(order),
     recipient_name: String(order.customerName || "Customer").slice(0, 100),
     recipient_phone: phone,
     recipient_secondary_phone: options.alternativePhone ? normalizeCourierPhone(options.alternativePhone) : undefined,
@@ -2180,6 +2187,55 @@ const getSteadfastPaymentsFromProvider = (paymentId) =>
 
 const getSteadfastPoliceStationsFromProvider = () => steadfastRequest("/police_stations");
 
+// Detaches an order from its courier consignment and puts it back to "confirmed" so it
+// can be sent again (e.g. the courier cancelled it). This does not cancel the parcel on
+// the courier's side; neither courier API offers that, so it is done in their panel.
+const unlinkOrderCourierInDB = async (id, { reason = "" } = {}, actorUserId) => {
+  const order = await getOrderForCourier(id);
+  const meta = getOrderMeta(order);
+  const integration = meta.courierIntegration || {};
+  const links = Object.entries(integration)
+    .filter(([, info]) => info && (info.trackingCode || info.consignmentId))
+    .map(([provider, info]) => ({
+      provider,
+      invoice: info.invoice || null,
+      consignmentId: info.consignmentId || null,
+      trackingCode: info.trackingCode || null,
+      status: info.status || null,
+    }));
+  if (!order.courier && !links.length) {
+    throw new ApiError(400, "This order is not linked to any courier");
+  }
+  if (OrderStatusService.toOrderStatusKey(order.status) === "delivered") {
+    throw new ApiError(400, "Delivered orders cannot be unlinked from the courier");
+  }
+
+  const { courierIntegration, ...rest } = meta;
+  const history = Array.isArray(meta.courierHistory) ? meta.courierHistory : [];
+  await order.update({
+    courier: null,
+    status: "confirmed",
+    note: JSON.stringify({
+      ...(!Object.keys(meta).length && order.note ? { legacyNote: order.note } : {}),
+      ...rest,
+      courierResendCount: (Number(meta.courierResendCount) || 0) + (links.length ? 1 : 0),
+      courierHistory: [
+        ...history,
+        {
+          courier: order.courier || null,
+          orderStatus: order.status,
+          links,
+          reason: String(reason || "").slice(0, 250) || null,
+          unlinkedBy: actorUserId || null,
+          unlinkedAt: new Date().toISOString(),
+        },
+      ].slice(-10),
+    }),
+  });
+
+  return { orderId: order.Id, invoice: order.orderId, status: order.status, unlinked: links };
+};
+
 const updateOrderStatusInDB = async (id, status, actorUserId) => {
   const nextStatus = await validateOrderStatus(status);
   const order = await Order.findByPk(id);
@@ -2218,6 +2274,7 @@ const OrderService = {
   updateOrderStatusInDB,
   sendOrderToSteadfastInDB,
   sendOrderToPathaoInDB,
+  unlinkOrderCourierInDB,
   bulkSendOrdersToSteadfastInDB,
   bulkSendOrdersToPathaoInDB,
   syncSteadfastStatusInDB,

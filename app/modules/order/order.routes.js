@@ -73,6 +73,16 @@ router.post(
   ),
   OrderController.sendOrderToPathao,
 );
+router.post(
+  "/:id/courier/unlink",
+  auth(
+    ENUM_USER_ROLE.SUPER_ADMIN,
+    ENUM_USER_ROLE.ADMIN,
+    ENUM_USER_ROLE.CS,
+    ENUM_USER_ROLE.LOGISTICS,
+  ),
+  OrderController.unlinkOrderCourier,
+);
 router.get("/:id/courier/steadfast/status", auth(), OrderController.syncSteadfastStatus);
 router.get("/:id/courier/pathao/status", auth(), OrderController.syncPathaoStatus);
 router.post(

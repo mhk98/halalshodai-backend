@@ -205,6 +205,16 @@ const updateOrderStatus = catchAsync(async (req, res) => {
   });
 });
 
+const unlinkOrderCourier = catchAsync(async (req, res) => {
+  const result = await OrderService.unlinkOrderCourierInDB(req.params.id, req.body || {}, req.user?.Id);
+  sendResponse(res, {
+    statusCode: 200,
+    success: true,
+    message: "Order unlinked from courier. It can be sent again.",
+    data: result,
+  });
+});
+
 const sendOrderToSteadfast = catchAsync(async (req, res) => {
   const result = await OrderService.sendOrderToSteadfastInDB(req.params.id, req.body);
   sendResponse(res, {
@@ -342,6 +352,7 @@ const OrderController = {
   updateOrderStatus,
   sendOrderToSteadfast,
   sendOrderToPathao,
+  unlinkOrderCourier,
   bulkSendOrdersToSteadfast,
   bulkSendOrdersToPathao,
   syncSteadfastStatus,
